@@ -1,0 +1,26 @@
+name = "BreezyBaroclinicInstability"
+uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+version = "0.1.0"
+authors = ["Gregory L. Wagner"]
+
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+Breeze = "660aa2fb-d4c8-4359-a52c-9c057bc511da"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CloudMicrophysics = "6a9e3e04-43cd-43ba-94b9-e8782df3c71b"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+
+[sources]
+Breeze = {rev = "glw/bw-stable-no-patch", url = "https://github.com/NumericalEarth/Breeze.jl.git"}
+Oceananigans = {rev = "glw/nccl-distributed-solver", url = "https://github.com/CliMA/Oceananigans.jl.git"}
+
+[compat]
+Breeze = "0.4"
+CUDA = "5.7"
+CloudMicrophysics = "0.32"
+JLD2 = "0.6"
+KernelAbstractions = "0.9"
+Oceananigans = "0.106"
