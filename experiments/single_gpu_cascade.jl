@@ -212,11 +212,15 @@ function run_phase(config::PhaseConfig, output_root::String;
         schedule = TimeInterval(config.save_interval),
         overwrite_existing = true)
 
-    # Diagnostics callback. Also tracks Δt min/max across the whole phase so
-    # we can report the achieved adaptive-Δt envelope at the end.
+    # Diagnostics callback. Tracks Δt min/max AND max(|u|), max(|v|), max(|w|)
+    # envelopes across the whole phase so we can report adaptive-Δt behaviour
+    # and flow magnitudes at the end.
     wall_start = Ref(time_ns())
     Δt_min_seen = Ref(Inf)
     Δt_max_seen = Ref(0.0)
+    max_absu_seen = Ref(0.0)
+    max_absv_seen = Ref(0.0)
+    max_absw_seen = Ref(0.0)
 
     function diagnostics(sim)
         m = sim.model
@@ -229,11 +233,16 @@ function run_phase(config::PhaseConfig, output_root::String;
         sdpd = wall > 0 ? (t / 86400) / (wall / 86400) : 0.0
 
         ρ_min, ρ_max   = field_extrema(BreezyBaroclinicInstability.dynamics_density(m.dynamics))
-        ρw_min, ρw_max = field_extrema(m.momentum.ρw)
+        max_absu = maximum(abs, Oceananigans.interior(m.velocities.u))
+        max_absv = maximum(abs, Oceananigans.interior(m.velocities.v))
+        max_absw = maximum(abs, Oceananigans.interior(m.velocities.w))
+        max_absu_seen[] = max(max_absu_seen[], max_absu)
+        max_absv_seen[] = max(max_absv_seen[], max_absv)
+        max_absw_seen[] = max(max_absw_seen[], max_absw)
 
-        @info @sprintf("[%s] iter=%6d  t=%9.1fs (%5.2fd)  Δt=%5.1fs (min=%.1f max=%.1f)  wall=%7.1fs  SDPD=%5.1f  ρ=[%.3e,%.3e]  ρw=[%.2e,%.2e]",
+        @info @sprintf("[%s] iter=%6d  t=%9.1fs (%5.2fd)  Δt=%5.1fs (min=%.1f max=%.1f)  wall=%7.1fs  SDPD=%5.1f  ρ=[%.3e,%.3e]  max|u|=%.2f max|v|=%.2f max|w|=%.3e",
                        label, iter, t, t/86400, Δt_now, Δt_min_seen[], Δt_max_seen[],
-                       wall, sdpd, ρ_min, ρ_max, ρw_min, ρw_max)
+                       wall, sdpd, ρ_min, ρ_max, max_absu, max_absv, max_absw)
 
         any_nan(m) && error("[$label] NaN at iter $iter, t=$(t)s")
         flush(stderr); flush(stdout)
@@ -248,9 +257,10 @@ function run_phase(config::PhaseConfig, output_root::String;
     Oceananigans.run!(simulation)
 
     total_wall = (time_ns() - wall_start[]) / 1e9
-    @info @sprintf("[%s] COMPLETE: sim_time=%.0fs (%.1f days), wall_time=%.0fs (%.2f hours), final Δt=%.1fs, Δt envelope=[%.1f, %.1f]s",
+    @info @sprintf("[%s] COMPLETE: sim_time=%.0fs (%.1f days), wall_time=%.0fs (%.2f hours), final Δt=%.1fs, Δt envelope=[%.1f, %.1f]s, max|u|=%.2f, max|v|=%.2f, max|w|=%.3e",
                    label, config.stop_time, config.stop_time/86400, total_wall, total_wall/3600,
-                   simulation.Δt, Δt_min_seen[], Δt_max_seen[])
+                   simulation.Δt, Δt_min_seen[], Δt_max_seen[],
+                   max_absu_seen[], max_absv_seen[], max_absw_seen[])
 
     # ── Save cascade handoff checkpoint ──────────────────────────────────
 
