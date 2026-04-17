@@ -34,7 +34,9 @@ Rx, Ry = 4, 2
 Nλ = 2880
 Nφ = 1280
 Nz = 64
-Δt = 0.6
+Δt = 3.0                               # initial outer Δt under acoustic substepping
+max_Δt = 15.0                          # advective-CFL ceiling at polar Δx_min (≈1.2 km)
+cfl = 0.7
 stop_time = 6 * 3600.0
 save_interval = 3600.0
 
@@ -90,11 +92,15 @@ save_iter_interval = round(Int, save_interval / Δt)
 
 simulation = Simulation(model; Δt, stop_time)
 
+conjure_time_step_wizard!(simulation; cfl, max_Δt, max_change=1.1)
+Oceananigans.Diagnostics.erroring_NaNChecker!(simulation)
+rank == 0 && @info "TimeStepWizard armed" cfl max_Δt initial_Δt=Δt
+
 function save_output(sim)
     iter = sim.model.clock.iteration
     iter > 0 && mod(iter, save_iter_interval) == 0 || return
     filepath = output_prefix * "_iter$(lpad(iter, 6, '0')).jld2"
-    save_checkpoint(sim.model, filepath; Δt)
+    save_checkpoint(sim.model, filepath; Δt=sim.Δt)
 end
 simulation.callbacks[:save] = Callback(save_output, IterationInterval(save_iter_interval))
 

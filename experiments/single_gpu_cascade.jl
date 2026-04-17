@@ -32,7 +32,9 @@ struct PhaseConfig
     Nλ                :: Int
     Nφ                :: Int
     Nz                :: Int
-    Δt                :: Float64
+    Δt                :: Float64   # initial outer Δt; TimeStepWizard adapts up to max_Δt
+    max_Δt            :: Float64   # upper clamp for adaptive outer Δt
+    cfl               :: Float64   # target advective CFL for TimeStepWizard
     stop_time         :: Float64
     save_interval     :: Float64
     diag_interval     :: Int
@@ -43,14 +45,23 @@ struct PhaseConfig
     clamp_moisture    :: Bool
 end
 
+# Δt values are *initial* — acoustic substepping (the default in `build_model`) lets the
+# outer step be bounded by the advective CFL, so `conjure_time_step_wizard!` ramps Δt up
+# toward `max_Δt`. `max_Δt` is a conservative ceiling calibrated to keep the wizard stable
+# at each resolution. If a phase diverges, lower `max_Δt` before lowering `cfl`.
+
 phases = [
     # Phase 1: 1-degree, analytic IC, 14 days (or 6h mini)
+    # Δx_min ≈ 9.7 km at the pole — empirical ceiling ~150-200s (BCI peak, U≈60 m/s).
+    # See Breeze/docs/src/appendix/bw_dt_sweep_results.md.
     PhaseConfig("1deg",
-        360, 160, 64,                             # grid
-        4.0,                                       # Δt
-        MINI ? 6*3600.0 : 14*86400.0,             # stop_time
-        MINI ? 3600.0 : 86400.0,                  # save every hour (mini) or day
-        MINI ? 500 : 2000,                         # diag interval
+        360, 160, 64,                              # grid
+        30.0,                                      # initial Δt
+        150.0,                                     # max Δt
+        0.7,                                       # CFL
+        MINI ? 6*3600.0 : 14*86400.0,              # stop_time
+        MINI ? 3600.0 : 86400.0,                   # save every hour (mini) or day
+        MINI ? 200 : 500,                          # diag interval (fewer iters now)
         nothing,                                   # no relaxation
         nothing,                                   # no cloud damping
         120.0,                                     # cloud_formation_τ
@@ -58,25 +69,31 @@ phases = [
         false),                                    # no moisture clamping
 
     # Phase 2: 1/4-degree, from 1° checkpoint, 2 days (or 1h mini)
+    # Δx_min ≈ 2.4 km at the pole — ceiling ~28s at U≈60 m/s.
     PhaseConfig("quarter_deg",
         1440, 640, 64,
-        1.0,
+        5.0,                                       # initial Δt
+        30.0,                                      # max Δt
+        0.7,
         MINI ? 3600.0 : 2*86400.0,
         MINI ? 600.0 : 3600.0,
-        MINI ? 500 : 1000,
-        (0.1, 1800.0),                            # relaxation: 0.1 s⁻¹ over 30 min
-        (0.1, 1800.0),                            # cloud damping
+        MINI ? 200 : 300,
+        (0.1, 1800.0),                             # relaxation: 0.1 s⁻¹ over 30 min
+        (0.1, 1800.0),                             # cloud damping
         120.0,
         0.0,
         true),                                     # clamp moisture after interpolation
 
     # Phase 3: 1/8-degree, from 1/4° checkpoint, 1 day (or 30min mini)
+    # Δx_min ≈ 1.2 km at the pole — ceiling ~15s at U≈60 m/s.
     PhaseConfig("eighth_deg",
         2880, 1280, 64,
-        0.6,
+        3.0,                                       # initial Δt
+        15.0,                                      # max Δt
+        0.7,
         MINI ? 1800.0 : 86400.0,
         MINI ? 600.0 : 3600.0,
-        MINI ? 500 : 1000,
+        MINI ? 200 : 300,
         (0.1, 1800.0),
         (0.1, 1800.0),
         120.0,
@@ -149,9 +166,19 @@ function run_phase(config::PhaseConfig, output_root::String;
 
     simulation = Simulation(model; Δt=config.Δt, stop_time=config.stop_time)
 
+    # Adaptive outer Δt from advective CFL; acoustic substepper inside handles sound waves.
+    conjure_time_step_wizard!(simulation;
+                              cfl       = config.cfl,
+                              max_Δt    = config.max_Δt,
+                              max_change = 1.1)
+    @info "[$label] TimeStepWizard armed" cfl=config.cfl max_Δt=config.max_Δt initial_Δt=config.Δt
+
+    # NaN checker that halts run! immediately on any NaN in prognostic fields.
+    Oceananigans.Diagnostics.erroring_NaNChecker!(simulation)
+
     # Periodic field output via Oceananigans JLD2OutputWriter
     output_fields = Oceananigans.fields(model)
-    simulation.output_writers[:fields] = JLD2OutputWriter(model, output_fields;
+    simulation.output_writers[:fields] = JLD2Writer(model, output_fields;
         filename = joinpath(phase_dir, "fields"),
         schedule = TimeInterval(config.save_interval),
         overwrite_existing = true)
@@ -163,14 +190,15 @@ function run_phase(config::PhaseConfig, output_root::String;
         m = sim.model
         iter = m.clock.iteration
         t    = m.clock.time
+        Δt_now = sim.Δt
         wall = (time_ns() - wall_start[]) / 1e9
         sdpd = wall > 0 ? (t / 86400) / (wall / 86400) : 0.0
 
         ρ_min, ρ_max   = field_extrema(BreezyBaroclinicInstability.dynamics_density(m.dynamics))
         ρw_min, ρw_max = field_extrema(m.momentum.ρw)
 
-        @info @sprintf("[%s] iter=%6d  t=%9.1fs (%5.2fd)  wall=%7.1fs  SDPD=%5.1f  ρ=[%.3e,%.3e]  ρw=[%.2e,%.2e]",
-                       label, iter, t, t/86400, wall, sdpd, ρ_min, ρ_max, ρw_min, ρw_max)
+        @info @sprintf("[%s] iter=%6d  t=%9.1fs (%5.2fd)  Δt=%5.1fs  wall=%7.1fs  SDPD=%5.1f  ρ=[%.3e,%.3e]  ρw=[%.2e,%.2e]",
+                       label, iter, t, t/86400, Δt_now, wall, sdpd, ρ_min, ρ_max, ρw_min, ρw_max)
 
         any_nan(m) && error("[$label] NaN at iter $iter, t=$(t)s")
         flush(stderr); flush(stdout)
@@ -191,7 +219,7 @@ function run_phase(config::PhaseConfig, output_root::String;
     # ── Save cascade handoff checkpoint ──────────────────────────────────
 
     checkpoint_path = joinpath(phase_dir, "$(label)_final.jld2")
-    save_checkpoint(model, checkpoint_path; Δt=config.Δt)
+    save_checkpoint(model, checkpoint_path; Δt=simulation.Δt)
 
     report_state(model; label="$label final")
 

@@ -20,7 +20,9 @@ Oceananigans.defaults.FloatType = Float32
 Nλ = 360
 Nφ = 160
 Nz = 64
-Δt = 4.0                              # [s] acoustic CFL allows ~4s at 1°
+Δt = 30.0                              # [s] initial Δt; wizard adapts up to max_Δt
+max_Δt = 150.0                         # [s] advective-CFL ceiling at polar Δx_min
+cfl = 0.7                              # advective CFL target
 stop_time = 6 * 3600.0                 # [s] 6 hours
 save_interval = 3600.0                 # [s] save every 1 hour
 
@@ -47,11 +49,14 @@ report_state(model; label="post-IC")
 
 simulation = Simulation(model; Δt, stop_time)
 
+conjure_time_step_wizard!(simulation; cfl, max_Δt, max_change=1.1)
+Oceananigans.Diagnostics.erroring_NaNChecker!(simulation)
+
 # JLD2 output writer for checkpoint fields
 output_fields = Oceananigans.fields(model)
 output_prefix = joinpath(output_dir, "fields")
 
-simulation.output_writers[:fields] = JLD2OutputWriter(model, output_fields;
+simulation.output_writers[:fields] = JLD2Writer(model, output_fields;
     filename = output_prefix,
     schedule = TimeInterval(save_interval),
     overwrite_existing = true)

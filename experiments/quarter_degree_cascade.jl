@@ -35,8 +35,10 @@ Rx, Ry = 2, 2
 Nλ = 1440
 Nφ = 560
 Nz = 64
-Δt = 1.0
-stop_time = 6 * 3600.0                # 6 hours
+Δt = 5.0                               # initial outer Δt under acoustic substepping
+max_Δt = 30.0                          # advective-CFL ceiling at polar Δx_min (≈2.4 km)
+cfl = 0.7
+stop_time = 6 * 3600.0                 # 6 hours
 save_interval = 3600.0                 # save every 1 hour
 
 ic_path = joinpath(@__DIR__, "output", "one_degree_spinup", "one_degree_final.jld2")
@@ -93,12 +95,16 @@ save_iter_interval = round(Int, save_interval / Δt)
 
 simulation = Simulation(model; Δt, stop_time)
 
+conjure_time_step_wizard!(simulation; cfl, max_Δt, max_change=1.1)
+Oceananigans.Diagnostics.erroring_NaNChecker!(simulation)
+rank == 0 && @info "TimeStepWizard armed" cfl max_Δt initial_Δt=Δt
+
 # Save callback (iteration-based for no float drift)
 function save_output(sim)
     iter = sim.model.clock.iteration
     iter > 0 && mod(iter, save_iter_interval) == 0 || return
     filepath = output_prefix * "_iter$(lpad(iter, 6, '0')).jld2"
-    save_checkpoint(sim.model, filepath; Δt)
+    save_checkpoint(sim.model, filepath; Δt=sim.Δt)
 end
 simulation.callbacks[:save] = Callback(save_output, IterationInterval(save_iter_interval))
 

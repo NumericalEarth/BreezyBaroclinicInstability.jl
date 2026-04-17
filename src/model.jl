@@ -25,6 +25,10 @@ filled after IC loading via `copy_ic_snapshots!(snapshots, model)`.
 - `sst_anomaly = 0.0`: SST anomaly [K] added to the balanced surface temperature
 - `relaxation = nothing`: `(α0, T_decay)` tuple for IC-relaxation forcing, or `nothing`
 - `cloud_damping = nothing`: `(α0, T_decay)` tuple for cloud-condensate damping, or `nothing`
+- `time_discretization = SplitExplicitTimeDiscretization()`: time discretization for the
+  compressible dynamics. Default is acoustic substepping (Wicker–Skamarock RK3 with an
+  adaptive number of substeps, derived from the horizontal acoustic CFL each outer step).
+  Pass `ExplicitTimeStepping()` to recover the fully explicit (acoustic-CFL-limited) path.
 
 # Example
 
@@ -34,14 +38,15 @@ using Oceananigans
 
 model, snapshots = build_model(GPU();
     Nλ = 5760, Nφ = 2560, Nz = 64,
-    Δt = 0.5,
+    Δt = 30.0,
     relaxation = (0.1, 1800),
     cloud_damping = (0.1, 1800))
 
 load_ic_interpolated!(model, "eighth_degree_checkpoint.jld2")
 copy_ic_snapshots!(snapshots, model)
 
-sim = Simulation(model; Δt = 0.5, stop_time = 12 * 3600)
+sim = Simulation(model; Δt = 30.0, stop_time = 12 * 3600)
+conjure_time_step_wizard!(sim; cfl = 0.7, max_Δt = 60.0)
 run!(sim)
 ```
 """
@@ -56,10 +61,11 @@ function build_model(arch;
                      cloud_formation_τ = 120.0,
                      sst_anomaly = 0.0,
                      relaxation = nothing,
-                     cloud_damping = nothing)
+                     cloud_damping = nothing,
+                     time_discretization = SplitExplicitTimeDiscretization())
 
-    # Auto time step from acoustic CFL
-    Δt_value = isnothing(Δt) ? 0.5 * (H / Nz) / 330.0 : Δt
+    # Initial time step: advective CFL under substepping, acoustic CFL otherwise.
+    Δt_value = isnothing(Δt) ? _default_initial_Δt(time_discretization, H, Nz, Nλ) : Δt
 
     grid = LatitudeLongitudeGrid(arch;
                                  size = (Nλ, Nφ, Nz),
@@ -71,7 +77,7 @@ function build_model(arch;
     coriolis = SphericalCoriolis()
 
     dynamics = CompressibleDynamics(
-        ExplicitTimeStepping();
+        time_discretization;
         surface_pressure = p_ref,
         reference_potential_temperature = theta_reference,
     )
@@ -134,3 +140,14 @@ function build_model(arch;
 
     return model, ic_snapshots
 end
+
+# Default initial Δt.
+#
+# - Acoustic substepping: outer step is bound by the advective (not acoustic) CFL.
+#   Use a conservative horizontal advective estimate at midlatitude and let
+#   `conjure_time_step_wizard!` adapt from there.
+# - Fully explicit: acoustic CFL limited (sound speed ~330 m/s); vertical Δz sets Δt.
+_default_initial_Δt(::SplitExplicitTimeDiscretization, H, Nz, Nλ) =
+    0.3 * (2π * 6.371e6 / Nλ) / 80.0  # 0.3 × Δx_eq / (jet + gravity wave buffer)
+_default_initial_Δt(::ExplicitTimeStepping,            H, Nz, Nλ) =
+    0.5 * (H / Nz) / 330.0             # vertical acoustic CFL

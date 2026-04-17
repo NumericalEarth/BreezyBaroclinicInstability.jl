@@ -1,0 +1,5 @@
+Manifest.toml
+.claude/
+experiments/output/
+*.jld2
+*.log

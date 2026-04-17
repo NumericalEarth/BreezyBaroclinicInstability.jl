@@ -12,7 +12,8 @@ using Oceananigans.Fields: CenterField, XFaceField, YFaceField, ZFaceField, Fiel
 using Oceananigans.Grids: λnode, φnode, znode, Center, Face, LatitudeLongitudeGrid
 
 using Breeze
-using Breeze: AtmosphereModel, CompressibleDynamics, ExplicitTimeStepping
+using Breeze: AtmosphereModel, CompressibleDynamics,
+               ExplicitTimeStepping, SplitExplicitTimeDiscretization
 using Breeze: BulkDrag, BulkSensibleHeatFlux, BulkVaporFlux
 using Breeze.AtmosphereModels: dynamics_density, specific_prognostic_moisture
 using Breeze.Microphysics: NonEquilibriumCloudFormation
