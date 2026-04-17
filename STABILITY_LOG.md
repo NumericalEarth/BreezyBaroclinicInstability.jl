@@ -7,34 +7,40 @@ All runs use `experiments/single_gpu_cascade.jl`, single H200, Float32 unless
 noted, `SplitExplicitTimeDiscretization` (acoustic substepping with adaptive
 substep count, minimum 6 per outer step), `conjure_time_step_wizard!` for Δt.
 
-`cfl_target` is the wizard's `cfl` keyword. `cfl_achieved` is the largest CFL
-actually reached during the run, derived from the logged Δt and either the
-jet speed (U≈60 m/s at BCI peak) or the characteristic initial U≈15 m/s.
-Blowup is whenever `NaN found in field ρ` fires.
+**Hard CFL ceiling:** 0.7 (WS-RK3 stability limit; do not raise above this).
+
+`cfl_target` is the wizard's `cfl` keyword — always ≤ 0.7. The wizard enforces
+`new_Δt = cfl × cell_advection_timescale`, so the **instantaneous CFL never
+exceeds `cfl_target`** no matter what `max_Δt` is. Rows below where Δt is
+pinned at `max_Δt` mean the wizard's Δt target (≈cfl × Δx/|U|) was larger
+than `max_Δt`, so the cap dominated and the run was effectively below target
+CFL. Blowup is whenever `NaN found in field ρ` fires.
 
 ## 2026-04-17
 
 ### Runs
 
-| # | lat      | H (km) | z-grid    | sponge (rate, width) | polar filt | cfl_target | max_Δt (s)        | cloud_τ (s) | Δt (s) | cfl_achieved | blowup time | notes                                   |
-|---|----------|--------|-----------|----------------------|------------|-----------|--------------------|-------------|--------|---------------|-------------|-----------------------------------------|
-| 4 | -80,80   | 30     | uniform   | -                    | -          | 0.7       | 150                | 120         | 150    | 0.93          | 16.0 h      | original baseline                       |
-| 5 | -80,80   | 30     | uniform   | -                    | -          | 0.7       | 100                | 120         | 100    | 0.62          | 17.6 h      |                                         |
-| 6 | -80,80   | 30     | uniform   | -                    | -          | 0.7       | 60                 | 120         | 60     | 0.37          | 18.3 h      |                                         |
-| 7 | -80,80   | 30     | uniform   | -                    | -          | 0.7       | 60                 | 600         | 60     | 0.37          | 26.4 h      | τ raised; moisture feedback slower      |
-| 8 | -80,80   | 45     | stretched | 1/600, 7 km          | -          | 0.5       | 120                | 600         | 120    | 0.74          | 38.9 h      | +domain, +stretch, +sponge              |
-| 9 | -75,75   | 45     | stretched | 1/600, 7 km          | -          | 0.7       | spinup=120, Inf    | 600         | 120    | 0.25          | 39.0 h      | Δx_min 3× larger → cfl lower per Δt     |
-| 10| -75,75   | 45     | stretched | 1/180, 12 km         | -          | 0.7       | spinup=120, Inf    | 600         | 120    | 0.25          | 26.5 h      | sponge→0 creates jet/top gradient; worse|
-| 11| -75,75   | 45     | stretched | 1/600, 7 km          | -          | 0.7       | spinup=30, Inf     | 600         | 30     | 0.06          | 46.0 h      | smaller Δt ≠ stable; same blowup mode   |
-| 12| -75,75   | 45     | stretched | 1/600, 7 km          | 60° thres  | 0.7       | spinup=30, Inf     | 600         | 30     | 0.06          | 46.0 h      | polar filter had **no** effect          |
+| # | lat      | H (km) | z-grid    | sponge (rate, width) | polar filt | cfl_target | max_Δt (s)        | cloud_τ (s) | Δt reached (s) | blowup time | notes                                   |
+|---|----------|--------|-----------|----------------------|------------|-----------|--------------------|-------------|-----------------|-------------|-----------------------------------------|
+| 4 | -80,80   | 30     | uniform   | -                    | -          | 0.7       | 150                | 120         | 150             | 16.0 h      | original baseline; pinned at max_Δt     |
+| 5 | -80,80   | 30     | uniform   | -                    | -          | 0.7       | 100                | 120         | 100             | 17.6 h      |                                         |
+| 6 | -80,80   | 30     | uniform   | -                    | -          | 0.7       | 60                 | 120         | 60              | 18.3 h      |                                         |
+| 7 | -80,80   | 30     | uniform   | -                    | -          | 0.7       | 60                 | 600         | 60              | 26.4 h      | τ raised; moisture feedback slower      |
+| 8 | -80,80   | 45     | stretched | 1/600, 7 km          | -          | 0.5       | 120                | 600         | 120             | 38.9 h      | +domain, +stretch, +sponge              |
+| 9 | -75,75   | 45     | stretched | 1/600, 7 km          | -          | 0.7       | spinup=120, Inf    | 600         | 120             | 39.0 h      |                                         |
+| 10| -75,75   | 45     | stretched | 1/180, 12 km         | -          | 0.7       | spinup=120, Inf    | 600         | 120             | 26.5 h      | sponge→0 creates jet/top gradient; worse|
+| 11| -75,75   | 45     | stretched | 1/600, 7 km          | -          | 0.7       | spinup=30, Inf     | 600         | 30              | 46.0 h      | smaller Δt ≠ stable; same blowup mode   |
+| 12| -75,75   | 45     | stretched | 1/600, 7 km          | 60° thres  | 0.7       | spinup=30, Inf     | 600         | 30              | 46.0 h      | polar filter had **no** effect          |
 
 ### Takeaways
 
-- **Maximum stable CFL reached: 0.74 (run 8)**, but only until t=39 h. That CFL
-  value came from running at Δt=120 s on a grid with Δx_min≈9.7 km and U≈60 m/s.
-  Higher max_Δt (run 4 at CFL 0.93) died much sooner.
-- Lowering CFL (and Δt) to 0.06 only bought ~7 h of extra sim time before the
-  same ρw blow-up reappeared in the top cells. The blow-up is **not CFL-driven.**
+- **Wizard cfl_target is capped at 0.7** everywhere (WS-RK3 stability limit).
+  That ceiling has never been exceeded during any run; in runs where Δt was
+  pinned at `max_Δt`, the effective CFL was *below* 0.7 because the wizard's
+  target (0.7 × Δx/|U|) was larger than the `max_Δt` cap.
+- Lowering Δt all the way to 30 s (instantaneous CFL ≪ 0.1) only bought ~7 h
+  of extra sim time before the same ρw blow-up reappeared in the top cells.
+  The blow-up is **not CFL-driven.**
 - Every mechanical fix (larger domain, stretched z, top sponge) pushed the
   blow-up later. Every fix targeting *dynamics* (polar filter, stronger sponge,
   lower CFL alone) either had zero effect or made things worse.
