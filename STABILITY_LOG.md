@@ -34,13 +34,17 @@ CFL. Blowup is whenever `NaN found in field ρ` fires.
 
 ### Takeaways
 
-- **Wizard cfl_target is capped at 0.7** everywhere (WS-RK3 stability limit).
-  That ceiling has never been exceeded during any run; in runs where Δt was
-  pinned at `max_Δt`, the effective CFL was *below* 0.7 because the wizard's
-  target (0.7 × Δx/|U|) was larger than the `max_Δt` cap.
-- Lowering Δt all the way to 30 s (instantaneous CFL ≪ 0.1) only bought ~7 h
-  of extra sim time before the same ρw blow-up reappeared in the top cells.
-  The blow-up is **not CFL-driven.**
+- **Wizard `cfl_target` is capped at 0.7** everywhere (WS-RK3 stability limit).
+  That ceiling was never exceeded — the wizard computes
+  `new_Δt = cfl_target × Δx/|U|` each call, so the instantaneous CFL is ≤
+  `cfl_target` by construction.
+- In every run so far the blow-up was at t ≈ 1.5–2 days, **before the BCI
+  reaches its peak** (day 4–5 typically). U at that time was ≈ 25–35 m/s, so
+  the instantaneous CFL at the moment of blow-up was 0.15–0.4 (well below
+  `cfl_target`).
+- Lowering Δt all the way to 30 s (CFL ≪ 0.1) only bought ~7 h of extra sim
+  time before the same ρw blow-up reappeared in the top cells. The blow-up
+  is **not CFL-driven.**
 - Every mechanical fix (larger domain, stretched z, top sponge) pushed the
   blow-up later. Every fix targeting *dynamics* (polar filter, stronger sponge,
   lower CFL alone) either had zero effect or made things worse.
