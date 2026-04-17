@@ -52,19 +52,21 @@ end
 
 phases = [
     # Phase 1: 1-degree, analytic IC, 14 days (or 6h mini)
-    # Δx_min ≈ 9.7 km at the pole — empirical ceiling ~150-200s (BCI peak, U≈60 m/s).
-    # See Breeze/docs/src/appendix/bw_dt_sweep_results.md.
+    # Δx_min ≈ 9.7 km at the pole. Breeze's dry BCI test is clean through day 7 at
+    # Δt = 60–100s; our moist run (bulk surface fluxes + microphysics) blew up at
+    # Δt = 100s around t ≈ 16h, so we cap at 60s for the full spinup. See
+    # Breeze/docs/src/appendix/bw_dt_sweep_results.md.
     PhaseConfig("1deg",
         360, 160, 64,                              # grid
-        30.0,                                      # initial Δt
-        150.0,                                     # max Δt
+        20.0,                                      # initial Δt
+        60.0,                                      # max Δt
         0.7,                                       # CFL
         MINI ? 6*3600.0 : 14*86400.0,              # stop_time
         MINI ? 3600.0 : 86400.0,                   # save every hour (mini) or day
         MINI ? 200 : 500,                          # diag interval (fewer iters now)
         nothing,                                   # no relaxation
         nothing,                                   # no cloud damping
-        120.0,                                     # cloud_formation_τ
+        600.0,                                     # cloud_formation_τ
         0.0,                                       # no SST anomaly
         false),                                    # no moisture clamping
 
@@ -173,8 +175,12 @@ function run_phase(config::PhaseConfig, output_root::String;
                               max_change = 1.1)
     @info "[$label] TimeStepWizard armed" cfl=config.cfl max_Δt=config.max_Δt initial_Δt=config.Δt
 
-    # NaN checker that halts run! immediately on any NaN in prognostic fields.
+    # NaN checker fires every iteration so we catch blowups at their source (rather than
+    # letting the wizard propagate a NaN Δt into compute_acoustic_substeps → InexactError).
     Oceananigans.Diagnostics.erroring_NaNChecker!(simulation)
+    let cb = simulation.callbacks[:nan_checker]
+        simulation.callbacks[:nan_checker] = Callback(cb.func, IterationInterval(1); parameters=cb.parameters, callsite=cb.callsite)
+    end
 
     # Periodic field output via Oceananigans JLD2OutputWriter
     output_fields = Oceananigans.fields(model)
