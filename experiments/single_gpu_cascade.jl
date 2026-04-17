@@ -15,7 +15,6 @@ using CUDA
 using Dates
 using Printf
 using Oceananigans
-using Breeze: add_polar_filter!
 using BreezyBaroclinicInstability
 
 Oceananigans.defaults.FloatType = Float32
@@ -205,12 +204,6 @@ function run_phase(config::PhaseConfig, output_root::String;
     let cb = simulation.callbacks[:nan_checker]
         simulation.callbacks[:nan_checker] = Callback(cb.func, IterationInterval(1); parameters=cb.parameters, callsite=cb.callsite)
     end
-
-    # Polar filter — damps zonal features that converge near the pole and would otherwise
-    # violate the horizontal advective CFL at high latitudes. Default threshold 60° is
-    # conservative; our latitude extent is (-75, 75).
-    add_polar_filter!(simulation; threshold_latitude = 60)
-    @info "[$label] Polar filter armed" threshold_latitude=60
 
     # Periodic field output via Oceananigans JLD2OutputWriter
     output_fields = Oceananigans.fields(model)
