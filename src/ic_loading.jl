@@ -26,16 +26,19 @@ Handles all field types: ρ, ρu, ρv, ρw, ρθ, ρqᵛ, and optionally
 ρqᶜˡ, ρqᶜⁱ, ρqʳ, ρqˢ. Checks both `"micro_ρqᶜˡ"` and `"ρqᶜˡ"` naming.
 """
 function load_ic_interpolated!(model, path::String;
-                               H = 30e3,
+                               H = nothing,
                                source_latitude = (-80, 80),
                                source_longitude = (0, 360),
+                               source_z_stretching = 3.0,
                                clamp_moisture = false)
-    Nλ_src, Nφ_src, Nz_src, ρ_data, ρu_data, ρv_data, ρw_data, ρθ_data, ρqv_data =
+    Nλ_src, Nφ_src, Nz_src, H_saved, ρ_data, ρu_data, ρv_data, ρw_data, ρθ_data, ρqv_data =
         JLD2.jldopen(path, "r") do file
-            (file["Nλ"], file["Nφ"], file["Nz"],
+            H_src = haskey(file, "H") ? Float64(file["H"]) : 30e3  # legacy checkpoints
+            (file["Nλ"], file["Nφ"], file["Nz"], H_src,
              file["ρ"], file["ρu"], file["ρv"], file["ρw"],
              file["ρθ"], file["ρqᵛ"])
         end
+    H_src = isnothing(H) ? H_saved : Float64(H)
 
     ρqcl_data, ρqci_data, ρqr_data, ρqs_data = JLD2.jldopen(path, "r") do file
         ρqcl = haskey(file, "micro_ρqᶜˡ") ? file["micro_ρqᶜˡ"] :
@@ -69,12 +72,18 @@ function load_ic_interpolated!(model, path::String;
 
     halo = Oceananigans.halo_size(grid)
 
+    src_z = if source_z_stretching == 0
+        (0, H_src)
+    else
+        k -> H_src * tanh(source_z_stretching * (k - 1) / Nz_src) / tanh(source_z_stretching)
+    end
+
     src_grid = LatitudeLongitudeGrid(GPU();
         size = (Nλ_src, Nφ_src, Nz_src),
         halo = halo,
         latitude  = source_latitude,
         longitude = source_longitude,
-        z = (0, H))
+        z = src_z)
 
     for (src_array, target_field) in pairs
         loc = Oceananigans.location(target_field)

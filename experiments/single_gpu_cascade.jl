@@ -45,25 +45,21 @@ struct PhaseConfig
     clamp_moisture    :: Bool
 end
 
-# Δt values are *initial* — acoustic substepping (the default in `build_model`) lets the
-# outer step be bounded by the advective CFL, so `conjure_time_step_wizard!` ramps Δt up
-# toward `max_Δt`. `max_Δt` is a conservative ceiling calibrated to keep the wizard stable
-# at each resolution. If a phase diverges, lower `max_Δt` before lowering `cfl`.
+# `Δt` is the *initial* outer step; `conjure_time_step_wizard!` then adapts it from the
+# advective CFL, targeting `cfl` and clamping at `max_Δt`. Under the 2026-04-17 stability
+# fixes (H=45km domain, stretched-in-z grid, top sponge layer, moist cloud_formation_τ=600)
+# the wizard drives Δt from CFL alone — `max_Δt` is only a guardrail.
 
 phases = [
     # Phase 1: 1-degree, analytic IC, 14 days (or 6h mini)
-    # Δx_min ≈ 9.7 km at the pole. Breeze's dry BCI test is clean through day 7 at
-    # Δt = 60–100s; our moist run (bulk surface fluxes + microphysics) blew up at
-    # Δt = 100s around t ≈ 16h, so we cap at 60s for the full spinup. See
-    # Breeze/docs/src/appendix/bw_dt_sweep_results.md.
     PhaseConfig("1deg",
         360, 160, 64,                              # grid
         20.0,                                      # initial Δt
-        60.0,                                      # max Δt
-        0.7,                                       # CFL
+        120.0,                                     # max Δt guardrail (wizard drives from CFL)
+        0.5,                                       # CFL (dropped from 0.7 — safety margin)
         MINI ? 6*3600.0 : 14*86400.0,              # stop_time
         MINI ? 3600.0 : 86400.0,                   # save every hour (mini) or day
-        MINI ? 200 : 500,                          # diag interval (fewer iters now)
+        MINI ? 200 : 500,                          # diag interval
         nothing,                                   # no relaxation
         nothing,                                   # no cloud damping
         600.0,                                     # cloud_formation_τ
@@ -71,34 +67,32 @@ phases = [
         false),                                    # no moisture clamping
 
     # Phase 2: 1/4-degree, from 1° checkpoint, 2 days (or 1h mini)
-    # Δx_min ≈ 2.4 km at the pole — ceiling ~28s at U≈60 m/s.
     PhaseConfig("quarter_deg",
         1440, 640, 64,
         5.0,                                       # initial Δt
-        30.0,                                      # max Δt
-        0.7,
+        30.0,                                      # max Δt guardrail
+        0.5,                                       # CFL
         MINI ? 3600.0 : 2*86400.0,
         MINI ? 600.0 : 3600.0,
         MINI ? 200 : 300,
         (0.1, 1800.0),                             # relaxation: 0.1 s⁻¹ over 30 min
         (0.1, 1800.0),                             # cloud damping
-        120.0,
+        600.0,                                     # cloud_formation_τ (stable ratio vs Δt)
         0.0,
         true),                                     # clamp moisture after interpolation
 
     # Phase 3: 1/8-degree, from 1/4° checkpoint, 1 day (or 30min mini)
-    # Δx_min ≈ 1.2 km at the pole — ceiling ~15s at U≈60 m/s.
     PhaseConfig("eighth_deg",
         2880, 1280, 64,
         3.0,                                       # initial Δt
-        15.0,                                      # max Δt
-        0.7,
+        15.0,                                      # max Δt guardrail
+        0.5,                                       # CFL
         MINI ? 1800.0 : 86400.0,
         MINI ? 600.0 : 3600.0,
         MINI ? 200 : 300,
         (0.1, 1800.0),
         (0.1, 1800.0),
-        120.0,
+        600.0,
         0.0,
         true),
 ]

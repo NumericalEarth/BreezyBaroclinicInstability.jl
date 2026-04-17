@@ -29,6 +29,12 @@ filled after IC loading via `copy_ic_snapshots!(snapshots, model)`.
   compressible dynamics. Default is acoustic substepping (Wicker–Skamarock RK3 with an
   adaptive number of substeps, derived from the horizontal acoustic CFL each outer step).
   Pass `ExplicitTimeStepping()` to recover the fully explicit (acoustic-CFL-limited) path.
+- `z_stretching = 3.0`: hyperbolic-tangent vertical-grid stretching parameter σ. Larger σ
+  packs more cells near the surface; typical values 2–4. Set to `0` for uniform Δz.
+- `sponge = (; rate=1/600, width=H/6)`: top-of-domain sponge layer — a `Relaxation` forcing
+  applied to ρu, ρv, ρw with a `GaussianMask{:z}` centered at `z=H`. Damps vertically
+  propagating waves that would otherwise reflect off the rigid lid. Pass `nothing` to
+  disable.
 
 # Example
 
@@ -54,7 +60,7 @@ function build_model(arch;
                      Nλ = 360,
                      Nφ = 160,
                      Nz = 64,
-                     H = 30e3,
+                     H = 45e3,
                      Δt = nothing,
                      halo = (4, 4, 4),
                      latitude = (-80, 80),
@@ -62,17 +68,22 @@ function build_model(arch;
                      sst_anomaly = 0.0,
                      relaxation = nothing,
                      cloud_damping = nothing,
-                     time_discretization = SplitExplicitTimeDiscretization())
+                     time_discretization = SplitExplicitTimeDiscretization(),
+                     z_stretching = 3.0,
+                     sponge = (; rate = 1/600, width = 7e3))
 
     # Initial time step: advective CFL under substepping, acoustic CFL otherwise.
     Δt_value = isnothing(Δt) ? _default_initial_Δt(time_discretization, H, Nz, Nλ) : Δt
+
+    # Hyperbolic-tanh vertical grid: packs cells near z=0 when σ > 0.
+    z_faces = _vertical_faces(Nz, H, z_stretching)
 
     grid = LatitudeLongitudeGrid(arch;
                                  size = (Nλ, Nφ, Nz),
                                  halo,
                                  longitude = (0, 360),
                                  latitude,
-                                 z = (0, H))
+                                 z = z_faces)
 
     coriolis = SphericalCoriolis()
 
@@ -129,7 +140,21 @@ function build_model(arch;
         build_cloud_damping_forcing(; α0, T_decay)
     end
 
-    merged_forcing = merge(ic_relax_forcing, cloud_damp_forcing)
+    # Top-of-domain sponge layer: damps vertically-propagating waves before they
+    # reflect off the rigid lid at z=H. Uses Oceananigans' `Relaxation` with a
+    # `GaussianMask{:z}` centered at z=H (profile 1 at the top, decaying to 0 below).
+    sponge_forcing = if sponge === nothing
+        NamedTuple()
+    else
+        rate  = sponge.rate
+        width = sponge.width
+        mask  = Oceananigans.Forcings.GaussianMask{:z}(center = H, width = width)
+        (ρu = Oceananigans.Forcings.Relaxation(; rate, mask),
+         ρv = Oceananigans.Forcings.Relaxation(; rate, mask),
+         ρw = Oceananigans.Forcings.Relaxation(; rate, mask))
+    end
+
+    merged_forcing = merge(ic_relax_forcing, cloud_damp_forcing, sponge_forcing)
 
     model = AtmosphereModel(grid; dynamics, coriolis, momentum_advection,
                             scalar_advection, microphysics, boundary_conditions,
@@ -151,3 +176,12 @@ _default_initial_Δt(::SplitExplicitTimeDiscretization, H, Nz, Nλ) =
     0.3 * (2π * 6.371e6 / Nλ) / 80.0  # 0.3 × Δx_eq / (jet + gravity wave buffer)
 _default_initial_Δt(::ExplicitTimeStepping,            H, Nz, Nλ) =
     0.5 * (H / Nz) / 330.0             # vertical acoustic CFL
+
+# Vertical face distribution: hyperbolic-tanh stretching near z=0 when σ > 0,
+# otherwise uniform. Returns a function suitable as the `z` argument of
+# `LatitudeLongitudeGrid`. Packs roughly `exp(σ)/(exp(σ)-1)` times more cells
+# in the bottom tenth than a uniform grid of the same Nz.
+function _vertical_faces(Nz, H, σ)
+    σ == 0 && return (0, H)
+    return k -> H * tanh(σ * (k - 1) / Nz) / tanh(σ)
+end

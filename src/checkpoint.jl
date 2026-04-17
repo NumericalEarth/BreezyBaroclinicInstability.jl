@@ -20,6 +20,9 @@ function save_checkpoint(model, filepath; Δt=nothing)
         file["Nλ"] = Nλ
         file["Nφ"] = Nφ
         file["Nz"] = Nz
+        # Record column height so downstream `load_ic_interpolated!` can reconstruct
+        # the source grid without assuming a default H.
+        file["H"] = Float64(grid.Lz)
         file["iteration"] = m.clock.iteration
         file["time"] = m.clock.time
         if Δt !== nothing

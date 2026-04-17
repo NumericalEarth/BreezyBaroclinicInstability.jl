@@ -20,9 +20,9 @@ Oceananigans.defaults.FloatType = Float32
 Nλ = 360
 Nφ = 160
 Nz = 64
-Δt = 20.0                              # [s] initial Δt; wizard adapts up to max_Δt
-max_Δt = 60.0                          # [s] moist-BCI stable ceiling (Breeze canonical)
-cfl = 0.7                              # advective CFL target
+Δt = 20.0                              # [s] initial outer Δt; wizard adapts from CFL
+max_Δt = 120.0                         # [s] guardrail; wizard normally stays below this
+cfl = 0.5                              # advective CFL target (conservative)
 stop_time = 6 * 3600.0                 # [s] 6 hours
 save_interval = 3600.0                 # [s] save every 1 hour
 
