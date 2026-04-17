@@ -24,34 +24,41 @@ the instability develops.
 
 ### Sensitivity sweep
 
-| `max_Δt` (s) | `cloud_formation_τ` (s) | blowup time |
-|--------------|-------------------------|-------------|
-| 150          | 120                     | t ≈ 16 h    |
-| 100          | 120                     | t ≈ 17.6 h  |
-| 60           | 120                     | t ≈ 18.3 h  |
-| 60           | 600                     | t ≈ 26.4 h  |
+| config                                                      | `cfl` | `max_Δt` (s) | `cloud_formation_τ` (s) | blowup time |
+|-------------------------------------------------------------|-------|--------------|-------------------------|-------------|
+| flat 30 km, uniform z                                       | 0.7   | 150          | 120                     | 16 h        |
+| flat 30 km, uniform z                                       | 0.7   | 100          | 120                     | 17.6 h      |
+| flat 30 km, uniform z                                       | 0.7   | 60           | 120                     | 18.3 h      |
+| flat 30 km, uniform z                                       | 0.7   | 60           | 600                     | 26.4 h      |
+| **45 km, stretched z, top sponge (1/600s, 7km)**            | 0.5   | 120          | 600                     | **38.9 h**  |
 
-The ordering suggests both outer-step CFL and condensation-timescale matter,
-but neither alone stabilises the run through the full 14-day spinup.
+Each configuration change pushes the blowup later; no single knob stabilises
+the full 14-day spinup. Growth rate also slows — from ~25× per 500 iters in
+the original uniform-z run to ~5× in the stretched+sponge run — but ρw still
+runs away.
 
-### Likely causes to investigate
+### Verified *not* causing the blowup
 
-1. **Bulk-flux stiffness** — `Cᴰ = 1e-3`, `Uᵍ = 1e-2` in `src/model.jl`. With
-   cold mid-latitude jets over a warm SST gradient, the sensible/vapor flux
-   update per outer Δt may be too large. Try halving `Cᴰ` or `Uᵍ`, or look at
-   implicit-in-Δt flux integration.
-2. **Missing horizontal diffusion/filter** — the cascade currently uses WENO(5)
-   advection only. Breeze's `PolarFilter` is not wired in. At 1° near the pole
-   Δx ≈ 10 km, so the advective CFL at the BCI peak (U ≈ 60 m/s) pushes 1
-   easily; dealias or add a small `HorizontalScalarDiffusivity`.
-3. **Moisture feedback** — non-equilibrium cloud formation couples to potential
-   temperature through latent heat release. At `Δt/τ` ≈ 0.1 (Δt=60, τ=600)
-   this is no longer the dominant feedback, but combined with (1) and (2) it
-   may be amplifying small perturbations.
-4. **Float32 precision** — Oceananigans is compiled here with `FloatType =
-   Float32`. Breeze's published Δt sweep used Float32 for a dry run; the moist
-   run has tighter thermodynamic tolerances and may benefit from Float64 at
-   least for the thermodynamic update.
+- **Acoustic substepping** — `acoustic_substepping.jl:1319-1320` enforces
+  `N = max(6, 6·cld(N_raw, 6))`. At Δt=60s on the 1° grid (Δx_min≈9.7 km) the
+  minimum is 6 substeps; Δτ=10 s gives acoustic CFL 0.36. Safe.
+- **Default NaN-checker cadence** — once pinned to `IterationInterval(1)` it
+  catches the ρ=NaN at its first appearance.
+
+### Likely remaining causes
+
+1. **Polar Δx_min metric with no filter** — at φ=80° Δx≈9.7 km and the
+   advective CFL at the BCI peak (U≈60 m/s) crosses 0.7. WENO(5) alone isn't
+   enough at that latitude band. Try wiring in Breeze's `PolarFilter` or a
+   small `HorizontalScalarDiffusivity(ν ≈ 1e4 m²/s)`.
+2. **Float32 near the top** — with H=45km, top-cell ρ drops to ~5×10⁻⁴ kg/m³;
+   any Float32 round-off in ρw/ρ gets amplified. Try `FloatType = Float64` in
+   the experiment scripts and re-check stability.
+3. **Sponge too weak** — current `rate = 1/600 s`, `width = 7 km`. A gravity-
+   wave packet traverses the sponge in ~1500 s so only e-folds once before
+   reflecting. Doubling `rate` and widening `width` to 10 km is cheap.
+4. **Bulk-flux stiffness** — `Cᴰ = 1e-3`, `Uᵍ = 1e-2`. If an implicit in-Δt
+   flux integration isn't available, at least halving `Cᴰ` is a sanity test.
 
 ### What works today
 
