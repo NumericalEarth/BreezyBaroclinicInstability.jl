@@ -58,7 +58,7 @@ rank == 0 && @info "Building model..." now(UTC)
 model, _ = build_model(arch;
     Nλ, Nφ, Nz, Δt,
     halo = (4, 4, 4),
-    latitude = (-80, 80),
+    latitude = (-75, 75),
     cloud_formation_τ,
     sst_anomaly,
 )

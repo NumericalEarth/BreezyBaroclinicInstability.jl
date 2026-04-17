@@ -20,7 +20,7 @@ filled after IC loading via `copy_ic_snapshots!(snapshots, model)`.
 - `H = 30e3`: column height [m]
 - `Δt = nothing`: time step [s]; if `nothing`, auto-computed from acoustic CFL
 - `halo = (4, 4, 4)`: halo size
-- `latitude = (-80, 80)`: latitude range
+- `latitude = (-75, 75)`: latitude range
 - `cloud_formation_τ = 120.0`: cloud condensation/freezing timescale [s]
 - `sst_anomaly = 0.0`: SST anomaly [K] added to the balanced surface temperature
 - `relaxation = nothing`: `(α0, T_decay)` tuple for IC-relaxation forcing, or `nothing`
@@ -63,7 +63,7 @@ function build_model(arch;
                      H = 45e3,
                      Δt = nothing,
                      halo = (4, 4, 4),
-                     latitude = (-80, 80),
+                     latitude = (-75, 75),
                      cloud_formation_τ = 120.0,
                      sst_anomaly = 0.0,
                      relaxation = nothing,

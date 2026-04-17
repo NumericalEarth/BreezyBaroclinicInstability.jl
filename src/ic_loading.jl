@@ -5,7 +5,7 @@
 """
     load_ic_interpolated!(model, path::String;
                           H = 30e3,
-                          source_latitude = (-80, 80),
+                          source_latitude = (-75, 75),
                           source_longitude = (0, 360),
                           clamp_moisture = false)
 
@@ -27,7 +27,7 @@ Handles all field types: ρ, ρu, ρv, ρw, ρθ, ρqᵛ, and optionally
 """
 function load_ic_interpolated!(model, path::String;
                                H = nothing,
-                               source_latitude = (-80, 80),
+                               source_latitude = (-75, 75),
                                source_longitude = (0, 360),
                                source_z_stretching = 3.0,
                                clamp_moisture = false)

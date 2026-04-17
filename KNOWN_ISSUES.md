@@ -24,18 +24,25 @@ the instability develops.
 
 ### Sensitivity sweep
 
-| config                                                      | `cfl` | `max_Δt` (s) | `cloud_formation_τ` (s) | blowup time |
-|-------------------------------------------------------------|-------|--------------|-------------------------|-------------|
-| flat 30 km, uniform z                                       | 0.7   | 150          | 120                     | 16 h        |
-| flat 30 km, uniform z                                       | 0.7   | 100          | 120                     | 17.6 h      |
-| flat 30 km, uniform z                                       | 0.7   | 60           | 120                     | 18.3 h      |
-| flat 30 km, uniform z                                       | 0.7   | 60           | 600                     | 26.4 h      |
-| **45 km, stretched z, top sponge (1/600s, 7km)**            | 0.5   | 120          | 600                     | **38.9 h**  |
+| config                                                      | lat range    | `cfl` | `max_Δt` (s) | `cloud_formation_τ` (s) | blowup time |
+|-------------------------------------------------------------|--------------|-------|--------------|-------------------------|-------------|
+| flat 30 km, uniform z                                       | (-80, 80)    | 0.7   | 150          | 120                     | 16 h        |
+| flat 30 km, uniform z                                       | (-80, 80)    | 0.7   | 100          | 120                     | 17.6 h      |
+| flat 30 km, uniform z                                       | (-80, 80)    | 0.7   | 60           | 120                     | 18.3 h      |
+| flat 30 km, uniform z                                       | (-80, 80)    | 0.7   | 60           | 600                     | 26.4 h      |
+| 45 km, stretched z, top sponge (1/600s, 7km)                | (-80, 80)    | 0.5   | 120          | 600                     | 38.9 h      |
+| + latitude → (-75, 75)                                      | (-75, 75)    | 0.7   | 120 (spinup) | 600                     | 39 h        |
+| + stronger sponge (1/180s, 12km)                            | (-75, 75)    | 0.7   | 120 (spinup) | 600                     | 26 h (worse)|
+| + smaller spinup Δt (30s)                                   | (-75, 75)    | 0.7   | 30 (spinup)  | 600                     | 46 h        |
+| **+ polar filter (threshold_lat=60)**                       | (-75, 75)    | 0.7   | 30 (spinup)  | 600                     | **46 h**    |
 
-Each configuration change pushes the blowup later; no single knob stabilises
-the full 14-day spinup. Growth rate also slows — from ~25× per 500 iters in
-the original uniform-z run to ~5× in the stretched+sponge run — but ρw still
-runs away.
+Growth rate slowed from ~25× per 500 iters (original) to ~2× per 500 iters
+(latest), but ρw eventually doubles every ~4 hours after day 1 regardless of
+knob. The blowup happens in top cells where ρ≈5×10⁻⁴ kg/m³; there, |ρw|≈0.05
+translates to |w|≈100 m/s, a clear upper-atmosphere amplification. Polar
+filter did **not** change the trajectory — rules out polar convergence as the
+driver. Stronger sponge made it **worse** (target-zero forcing creates
+near-top velocity gradients).
 
 ### Verified *not* causing the blowup
 
@@ -45,20 +52,36 @@ runs away.
 - **Default NaN-checker cadence** — once pinned to `IterationInterval(1)` it
   catches the ρ=NaN at its first appearance.
 
-### Likely remaining causes
+### Likely remaining causes (after the 2026-04-17 evening sweep)
 
-1. **Polar Δx_min metric with no filter** — at φ=80° Δx≈9.7 km and the
-   advective CFL at the BCI peak (U≈60 m/s) crosses 0.7. WENO(5) alone isn't
-   enough at that latitude band. Try wiring in Breeze's `PolarFilter` or a
-   small `HorizontalScalarDiffusivity(ν ≈ 1e4 m²/s)`.
-2. **Float32 near the top** — with H=45km, top-cell ρ drops to ~5×10⁻⁴ kg/m³;
-   any Float32 round-off in ρw/ρ gets amplified. Try `FloatType = Float64` in
-   the experiment scripts and re-check stability.
-3. **Sponge too weak** — current `rate = 1/600 s`, `width = 7 km`. A gravity-
-   wave packet traverses the sponge in ~1500 s so only e-folds once before
-   reflecting. Doubling `rate` and widening `width` to 10 km is cheap.
-4. **Bulk-flux stiffness** — `Cᴰ = 1e-3`, `Uᵍ = 1e-2`. If an implicit in-Δt
-   flux integration isn't available, at least halving `Cᴰ` is a sanity test.
+1. **Float32 round-off at the top cell** — the most likely remaining suspect.
+   With H=45km, top-cell ρ≈5×10⁻⁴ kg/m³; Float32 has ≈7 digits of precision so
+   relative errors in ρu/ρ, ρw/ρ, and thermodynamic inversions are order 1e-7.
+   After thousands of iterations those drift. Try `Oceananigans.defaults.FloatType = Float64`
+   in the experiment scripts; the cost is ~2× memory and ~1.5× compute, but
+   it directly tests this hypothesis.
+2. **Sponge design, not strength** — relaxing ρu, ρv, ρw toward **zero** at
+   the top is Rayleigh friction, which creates a velocity gradient between
+   the jet and the sponged top. Targeting the *balanced zonal wind* (i.e.
+   `balanced_zonal_wind(φ, z)` from `src/balanced_state.jl`) rather than 0
+   would keep the sponge consistent with the base state.
+3. **Bulk-flux stiffness** — `Cᴰ = 1e-3`, `Uᵍ = 1e-2`. Not yet tested. Halve
+   `Cᴰ` or gate fluxes off the first day to see whether surface forcing is
+   driving the initial perturbation that then grows.
+4. **Add a small horizontal viscosity** — a `HorizontalScalarDiffusivity(ν = 1e4 m²/s)`
+   on momentum tendencies would damp small-scale features without hurting the
+   BCI signal. Cheap to try.
+
+### Ruled out (from the 2026-04-17 sweep)
+
+- Acoustic substepping (forced min 6 substeps, CFL 0.36 at Δt=60s).
+- Polar convergence (Breeze `add_polar_filter!(threshold_latitude=60)` enabled
+  — identical ρw trajectory to runs without it).
+- CFL-driven numerical instability (blowup time is the same at Δt=30 and Δt=120
+  after accounting for iter count; smaller Δt only delays by ~20%).
+- Cloud-formation timescale alone (`τ ∈ {120, 600}` both blow up).
+- Polar metric (extending latitude to (-75, 75) gave 3× larger Δx_min with no
+  meaningful change in blowup time).
 
 ### What works today
 

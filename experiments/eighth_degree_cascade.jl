@@ -57,7 +57,7 @@ rank == 0 && @info "Building model (Nλ=$Nλ, Nφ=$Nφ, Nz=$Nz, Δt=$(Δt)s)..."
 model, snapshots = build_model(arch;
     Nλ, Nφ, Nz, Δt,
     halo = (4, 4, 4),
-    latitude = (-80, 80),
+    latitude = (-75, 75),
     cloud_formation_τ = 120.0,
     relaxation = (0.1, 1800),
 )
