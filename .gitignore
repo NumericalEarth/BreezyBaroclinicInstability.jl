@@ -3,3 +3,4 @@ Manifest.toml
 experiments/output/
 *.jld2
 *.log
+*.png
