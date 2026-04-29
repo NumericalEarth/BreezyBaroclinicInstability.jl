@@ -9,6 +9,7 @@ using CUDA
 using Dates
 using Printf
 using Oceananigans
+using Oceananigans.Units
 using Breeze
 using BreezyBaroclinicInstability
 
@@ -18,25 +19,20 @@ Oceananigans.defaults.FloatType = Float32
 @assert CUDA.functional() "CUDA.functional() == false"
 @info "CUDA functional" device=CUDA.device() free_GB=round(CUDA.available_memory()/1e9, digits=2)
 
-@info "T1.2 — Build model at 1° (substepping)"
-model, snapshots = build_model(GPU(); Nλ=360, Nφ=160, Nz=64, Δt=30.0)
-@assert snapshots === nothing
+@info "T1.2 — Build model at 1° (substepping; IC set inside builder)"
+model = moist_baroclinic_instability_model(GPU(); Nλ=360, Nφ=160, Nz=64)
 @assert size(model.grid) == (360, 160, 64)
-@info "build_model OK" grid=size(model.grid) td=model.dynamics.time_discretization
+@info "model built" grid=size(model.grid) td=model.dynamics.time_discretization
 
-@info "T1.3 — Build model with relaxation + cloud damping"
-model2, snaps2 = build_model(GPU(); Nλ=360, Nφ=160, Nz=64, Δt=30.0,
-    relaxation=(0.1, 1800), cloud_damping=(0.1, 1800))
-@assert snaps2 !== nothing
-@assert haskey(snaps2, :ρu)
-@assert haskey(snaps2, :ρθ)
-@info "relaxation path OK" keys=keys(snaps2)
+@info "T1.3 — Build model with cloud damping, set_ic=false"
+model2 = moist_baroclinic_instability_model(GPU(); Nλ=360, Nφ=160, Nz=64,
+    cloud_damping = (0.1, 1800), set_ic = false)
+@info "cloud-damping path OK"
 
-model2 = nothing; snaps2 = nothing
+model2 = nothing
 GC.gc(true); GC.gc(false); GC.gc(true); CUDA.reclaim()
 
-@info "T1.4 — Analytic IC"
-set_analytic_ic!(model)
+@info "T1.4 — IC already set by builder; verify state"
 @assert !any_nan(model)
 check_density_positivity(model)
 report_state(model; label="analytic IC")
@@ -61,8 +57,8 @@ report_state(model; label="after first step")
 @info "first step OK" clock=model.clock
 
 @info "T2.1 — Short adaptive 1° run (10 minutes sim, wizard active)"
-simulation = Simulation(model; Δt=30.0, stop_time=600.0)
-conjure_time_step_wizard!(simulation; cfl=0.7, max_Δt=300.0, max_change=1.1)
+simulation = Simulation(model; Δt=30, stop_time=10minutes)
+conjure_time_step_wizard!(simulation; cfl=0.7)
 Oceananigans.Diagnostics.erroring_NaNChecker!(simulation)
 
 wall_start = Ref(time_ns())
@@ -78,7 +74,7 @@ end
 simulation.callbacks[:diag] = Callback(diag, IterationInterval(5))
 
 wall_start[] = time_ns()
-Oceananigans.run!(simulation)
+run!(simulation)
 
 report_state(model; label="after 10-min run")
 @info "SMOKE TESTS PASSED" now=now(UTC) final=model.clock final_Δt=simulation.Δt

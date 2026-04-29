@@ -15,14 +15,16 @@ using Breeze
 using Breeze: AtmosphereModel, CompressibleDynamics,
                ExplicitTimeStepping, SplitExplicitTimeDiscretization
 using Breeze: BulkDrag, BulkSensibleHeatFlux, BulkVaporFlux
+using Breeze: HydrostaticSphericalCoriolis, SphericalCoriolis, ThermodynamicConstants
 using Breeze.AtmosphereModels: dynamics_density, specific_prognostic_moisture
-using Breeze.Microphysics: NonEquilibriumCloudFormation
+using Breeze.Microphysics: SaturationAdjustment, NonEquilibriumCloudFormation,
+                           ConstantRateCondensateFormation
 using CloudMicrophysics
 
 # ── Exports ──────────────────────────────────────────────────────────────
 
 # Model construction
-export build_model
+export moist_baroclinic_instability_model
 
 # Initial conditions
 export set_analytic_ic!

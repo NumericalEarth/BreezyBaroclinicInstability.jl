@@ -15,16 +15,11 @@ using CUDA
 using Dates
 using Printf
 using Oceananigans
+using Oceananigans.Units
 using BreezyBaroclinicInstability
 
 Oceananigans.defaults.FloatType = Float32
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Configuration
-# ═══════════════════════════════════════════════════════════════════════════
-
 const MINI = get(ENV, "CASCADE_MINI", "false") == "true"
-
 MINI && @info "MINI CASCADE MODE: reduced durations for validation"
 
 struct PhaseConfig
@@ -40,9 +35,7 @@ struct PhaseConfig
     stop_time         :: Float64
     save_interval     :: Float64
     diag_interval     :: Int
-    relaxation        :: Union{Nothing, Tuple{Float64, Float64}}
     cloud_damping     :: Union{Nothing, Tuple{Float64, Float64}}
-    cloud_formation_τ :: Float64
     sst_anomaly       :: Float64
     clamp_moisture    :: Bool
 end
@@ -67,9 +60,7 @@ phases = [
         MINI ? 6*3600.0 : 14*86400.0,              # stop_time
         MINI ? 3600.0 : 86400.0,                   # save every hour (mini) or day
         MINI ? 200 : 500,                          # diag interval
-        nothing,                                   # no relaxation
         nothing,                                   # no cloud damping
-        600.0,                                     # cloud_formation_τ
         0.0,                                       # no SST anomaly
         false),                                    # no moisture clamping
 
@@ -85,9 +76,7 @@ phases = [
         MINI ? 3600.0 : 2*86400.0,
         MINI ? 600.0 : 3600.0,
         MINI ? 200 : 300,
-        (0.1, 1800.0),                             # relaxation: 0.1 s⁻¹ over 30 min
         (0.1, 1800.0),                             # cloud damping
-        600.0,                                     # cloud_formation_τ
         0.0,
         true),                                     # clamp moisture after interpolation
 
@@ -102,9 +91,7 @@ phases = [
         MINI ? 1800.0 : 86400.0,
         MINI ? 600.0 : 3600.0,
         MINI ? 200 : 300,
-        (0.1, 1800.0),
-        (0.1, 1800.0),
-        600.0,
+        (0.1, 1800.0),                             # cloud damping
         0.0,
         true),
 ]
@@ -126,28 +113,21 @@ function run_phase(config::PhaseConfig, output_root::String;
     @info "━━━ Phase: $label ━━━" config.Nλ config.Nφ config.Nz config.Δt config.stop_time now(UTC)
 
     # ── Build model ──────────────────────────────────────────────────────
+    # Phase 1 uses the DCMIP analytic IC set by the builder (set_ic = true default).
+    # Phases 2–3 load an interpolated IC from the previous phase's checkpoint.
 
     arch = GPU()
-    model, snapshots = build_model(arch;
+    model = moist_baroclinic_instability_model(arch;
         Nλ              = config.Nλ,
         Nφ              = config.Nφ,
         Nz              = config.Nz,
-        Δt              = config.Δt,
-        halo            = (4, 4, 4),
-        latitude        = (-75, 75),
-        cloud_formation_τ = config.cloud_formation_τ,
         sst_anomaly     = config.sst_anomaly,
-        relaxation      = config.relaxation,
-        cloud_damping   = config.cloud_damping)
+        cloud_damping   = config.cloud_damping,
+        set_ic          = ic_path === nothing)
 
     @info "[$label] Model built" size(model.grid) eltype(model.grid)
 
-    # ── Initial conditions ───────────────────────────────────────────────
-
-    if ic_path === nothing
-        @info "[$label] Setting analytic IC..."
-        set_analytic_ic!(model)
-    else
+    if ic_path !== nothing
         @info "[$label] Loading IC from checkpoint..." ic_path
         load_ic_interpolated!(model, ic_path; clamp_moisture=config.clamp_moisture)
     end
@@ -156,21 +136,7 @@ function run_phase(config::PhaseConfig, output_root::String;
     check_density_positivity(model)
     report_state(model; label="$label post-IC")
 
-    if snapshots !== nothing
-        copy_ic_snapshots!(snapshots, model)
-        @info "[$label] IC-relaxation snapshots frozen"
-    end
-
-    # ── First time step (required for AtmosphereModel before run!) ───────
-
-    @info "[$label] First time step..."
-    Oceananigans.TimeSteppers.update_state!(model)
-    Oceananigans.TimeSteppers.time_step!(model, config.Δt)
-
-    any_nan(model) && error("[$label] NaN after first time step")
-    @info "[$label] First step OK" model.clock
-
-    # ── Simulation with JLD2OutputWriter ─────────────────────────────────
+    # ── Simulation with JLD2Writer ───────────────────────────────────────
 
     simulation = Simulation(model; Δt=config.Δt, stop_time=config.stop_time)
 

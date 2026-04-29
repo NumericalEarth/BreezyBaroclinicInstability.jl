@@ -49,15 +49,17 @@ surface_temperature(λ_deg, φ_deg) = virtual_temperature(deg2rad(φ_deg), 0.0)
 # GPU kernels for setting analytic initial conditions
 # ═══════════════════════════════════════════════════════════════════════════
 
-@kernel function _set_moist_baroclinic_wave_kernel!(θ_field, ρ_field, qv_field, grid)
+@kernel function _set_moist_baroclinic_wave_kernel!(θ_field, ρ_field, qv_field, p_field, grid)
     i, j, k = @index(Global, NTuple)
     λ_deg = λnode(i, j, k, grid, Center(), Center(), Center())
     φ_deg = φnode(i, j, k, grid, Center(), Center(), Center())
     z     = znode(i, j, k, grid, Center(), Center(), Center())
+    φ     = deg2rad(φ_deg)
     @inbounds begin
         θ_field[i, j, k] = initial_theta(λ_deg, φ_deg, z)
         ρ_field[i, j, k] = initial_density(λ_deg, φ_deg, z)
         qv_field[i, j, k] = initial_moisture(λ_deg, φ_deg, z)
+        p_field[i, j, k] = balanced_pressure(φ, z)
     end
 end
 
@@ -72,33 +74,17 @@ end
 """
     set_analytic_ic!(model)
 
-Set the DCMIP-2016 moist baroclinic wave analytic initial conditions on `model`.
-Computes θ, ρ, u, qᵛ from the balanced state + perturbation, then forms
-the conserved densities ρθ, ρu, ρqᵛ.
+Set the DCMIP-2016 moist baroclinic wave analytic initial conditions on `model`
+via Breeze's `set!(model; ρ, u, θ, qᵛ)` interface. `set!` handles staggered-grid
+ρu interpolation, fills halos, calls `update_state!`, and applies the pressure
+correction so the IC is consistent with the EoS and with the substepper's
+linearization basic state.
 """
 function set_analytic_ic!(model)
-    grid = model.grid
-    arch = grid.architecture
-
-    ρ  = dynamics_density(model.dynamics)
-    θ  = model.formulation.potential_temperature
-    qv = specific_prognostic_moisture(model)
-    u  = model.velocities.u
-
-    Oceananigans.Utils.launch!(arch, grid, :xyz,
-        _set_moist_baroclinic_wave_kernel!, θ, ρ, qv, grid)
-
-    Oceananigans.Utils.launch!(arch, grid, :xyz,
-        _set_zonal_wind_kernel!, u, grid)
-
-    ρθ = model.formulation.potential_temperature_density
-    parent(ρθ) .= parent(ρ) .* parent(θ)
-
-    ρu = model.momentum.ρu
-    parent(ρu) .= parent(ρ) .* parent(u)
-
-    ρqv = model.moisture_density
-    parent(ρqv) .= parent(ρ) .* parent(qv)
-
+    Oceananigans.Fields.set!(model;
+        ρ  = initial_density,
+        u  = initial_zonal_wind,
+        θ  = initial_theta,
+        qᵛ = initial_moisture)
     return nothing
 end
